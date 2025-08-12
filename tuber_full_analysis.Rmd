@@ -1,0 +1,2541 @@
+---
+title: "Tubme Pipeline"
+output: html_notebook
+---
+
+
+## 1. Getting Stats from the original spades run 
+
+```{bash script to loop and write to a file}
+output_file="/scratch/alpine/beyo2625/arthur_truffles/old_spades_commands.tsv"
+echo -e "Sample\tSPAdes_Command" > "$output_file"
+
+cd /pl/active/fungi1/argr6723_2-15-21/Rufum_TC/Assemblies_SPAdes
+for dir in */; do
+  if [[ -f "$dir/params.txt" ]]; then
+    cmd=$(grep "^Command line:" "$dir/params.txt" | sed 's/^Command line:[[:space:]]*//')
+    echo -e "${dir%/}\t$cmd" >> "$output_file"
+  fi
+done
+```
+
+
+## 2. FastQC to Get Stats and Shiz
+
+```{bash fastqc on the fastq reports}
+#!/bin/bash
+#SBATCH --time=00:05:00
+#SBATCH --qos=normal
+#SBATCH --partition=amilan
+#SBATCH --account=ucb423_asc2
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=1
+#SBATCH --job-name=fastqc
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/fastqc.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/fastqc.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+# making a list of sample names
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+echo "files being blasted against prok database"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --account=ucb423_asc2' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --qos=normal' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --partition=amilan' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --time=24:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --mem=5G' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --ntasks=2' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --job-name='"$PALPAL"'_fastqc' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/'"$PALPAL"'_fastqc.err' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/'"$PALPAL"'_fastqc.out' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+echo 'conda activate fastqc_env' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+
+echo 'fastqc \
+-o /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/fastqc \
+--threads 4 \
+--memory 2000 \
+--dir /scratch/alpine/beyo2625/temp \
+/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads'"${PALPAL}"'_R1_paired.fastq \
+/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads'"${PALPAL}"'_R2_paired.fastq' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_fastqc.sh
+done
+```
+
+```{bash summarising fastqc results pre trimming}
+cd /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads
+mamba activate multiqc_env
+multiqc fastqc -o multiqc/
+# scp -r beyo2625@login.rc.colorado.edu:/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/multiqc /Users/benyoung/Library/CloudStorage/OneDrive-UCB-O365/projects/arthur_tubme
+```
+
+Sooooo it looks like (?) these were not trimmed. So lets trim and see how they look. 
+
+
+## 3. Trimgalore and FastQC
+
+```{bash running trim galore}
+#!/bin/bash
+#SBATCH --time=00:05:00
+#SBATCH --qos=normal
+#SBATCH --partition=amilan
+#SBATCH --account=ucb423_asc2
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=1
+#SBATCH --job-name=tg
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/tg.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/tg.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+# making a list of sample names
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+echo "files being blasted against prok database"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --account=ucb423_asc2' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --qos=normal' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --partition=amilan' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --time=24:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --mem=5G' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --job-name='"$PALPAL"'_tg' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/'"$PALPAL"'_tg.err' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/'"$PALPAL"'_tg.out' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+echo 'conda activate trimgalore_env' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+
+echo 'trim_galore \
+--fastqc \
+--basename '"${PALPAL}"' \
+--output_dir /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads_trimmed \
+--paired \
+--cores 10 \
+/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/'"${PALPAL}"'_R1_paired.fastq \
+/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/'"${PALPAL}"'_R2_paired.fastq' >> /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/loop_err_out/"$PALPAL"_tg.sh
+done
+```
+
+```{bash summarising fastqc after trim results}
+cd /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads
+mamba activate multiqc_env
+multiqc fastqc -o multiqc/
+# scp -r beyo2625@login.rc.colorado.edu:/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/multiqc /Users/benyoung/Library/CloudStorage/OneDrive-UCB-O365/projects/arthur_tubme
+```
+
+
+## 4. BLAST of Trimmed Reads to Viral and Prokaryotic
+### 4.1 - Downloading DBs
+
+```{bash downlaoding blast databases}
+#!/bin/bash
+#SBATCH --time=100:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=15G
+#SBATCH --ntasks=5
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=blast_dbdw
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/db_dl.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/db_dl.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/contam_blast/dbs
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate blast_env
+
+update_blastdb.pl --decompress ref_prok_rep_genomes
+update_blastdb.pl --decompress ref_viruses_rep_genomes
+```
+
+
+### 4.2 - Running Blasts
+
+```{bash making fastas}
+#!/bin/bash
+#SBATCH --time=100:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=10G
+#SBATCH --ntasks=5
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=making_fastas
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/making_fastas.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/making_fastas.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate seqtk_env
+
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+for PALPAL in $PALMATA; do
+  seqtk seq -A /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads_trimmed/${PALPAL}_val_1.fq \
+    > /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_fastas/${PALPAL}_val_1.fasta
+
+  seqtk seq -A /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads_trimmed/${PALPAL}_val_2.fq \
+    > /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_fastas/${PALPAL}_val_2.fasta
+
+  echo "Sample ${PALPAL} processed"
+done
+```
+
+^^^ Should this be a job script, probably but eh
+
+```{bash viral blast for all samples}
+#!/bin/bash
+#SBATCH --time=00:05:00
+#SBATCH --qos=normal
+#SBATCH --partition=amilan
+#SBATCH --account=ucb423_asc2
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=1
+#SBATCH --job-name=viral_blast
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/prok_viral_loop.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/prok_viral_loop.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+# making a list of sample names
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+echo "files being blasted against prok database"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --account=ucb423_asc2' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --qos=normal' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --partition=amilan' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --time=24:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --mem=40G' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --ntasks=10' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --job-name='"$PALPAL"'_vir' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/'"$PALPAL"'_vir.err' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/'"$PALPAL"'_vir.out' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+echo 'conda activate blast_env' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+
+echo 'blastn \
+-query /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_fastas/'"${PALPAL}"'_val_1.fasta \
+-db /scratch/alpine/beyo2625/arthur_truffles/contam_blast/dbs/ref_viruses_rep_genomes \
+-outfmt 6 \
+-evalue 20 \
+-num_threads 20 \
+-max_target_seqs 50 \
+-subject_besthit \
+-sorthits 1 \
+-out /scratch/alpine/beyo2625/arthur_truffles/contam_blast/viral_blast/'"${PALPAL}"'_viral_cont_hits_rr.txt' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_virb.sh
+done
+```
+
+```{bash prokaryotic blast for all samples}
+#!/bin/bash
+#SBATCH --time=00:05:00
+#SBATCH --qos=normal
+#SBATCH --partition=amilan
+#SBATCH --account=ucb423_asc2
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=1
+#SBATCH --job-name=prok_blast
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/prok_blast_loop.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/prok_blast_loop.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+# making a list of sample names
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+echo "files being blasted against prok database"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --qos=long' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --partition=amilan' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --account=ucb423_asc2' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --time=70:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --mem=20G' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --job-name='"$PALPAL"'_prokb' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/'"$PALPAL"'_prokb.err' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/'"$PALPAL"'_prokb.out' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+echo 'conda activate blast_env' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+
+echo 'blastn \
+-query /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_fastas/'"${PALPAL}"'_val_1.fasta \
+-db /scratch/alpine/beyo2625/arthur_truffles/contam_blast/dbs/ref_prok_rep_genomes \
+-outfmt 6 \
+-evalue 20 \
+-num_threads 10 \
+-max_target_seqs 50 \
+-subject_besthit \
+-sorthits 1 \
+-out /scratch/alpine/beyo2625/arthur_truffles/contam_blast/prok_blast/'"${PALPAL}"'_prok_cont_hits_rr.txt' >> /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/"$PALPAL"_prokb.sh
+done
+```
+
+
+### 4.3 - Subsetting BLAST Results
+
+Okay so we now have the viral and bacterial blasts. As these are short reads the bit score will not get up to 1000, but rather a value between 100 and 200 indicates high coverage and e value. We will go with the 200 bit score. 
+
+The default fields in outfmt 6 are as follows:
+
+*qseqid*: Query sequence ID.
+*sseqid*: Subject (database) sequence ID.
+*pident*: Percentage of identical matches.
+*length*: Alignment length (number of bases or residues aligned, including gaps).
+*mismatch*: Number of mismatches.
+*gapopen*: Number of gap openings.
+*qstart*: Start of alignment in the query.
+*qend*: End of alignment in the query.
+*sstart*: Start of alignment in the subject.
+*send*: End of alignment in the subject.
+*evalue*: Expect value (E-value).
+*bitscore*: Bit score.
+
+```{bash viral subsets}
+#!/bin/bash
+#SBATCH --time=10:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=viral_subset
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/vir_subset.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/vir_subset.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/contam_blast/viral_blast
+for file in *_viral_cont_hits_rr.txt; do
+    base=${file%_viral_cont_hits_rr.txt}
+    
+    # Filter for bit score thresholds
+    awk '$12 > 150' "$file" > "${base}_viral_150.txt"
+    awk '$12 > 200' "$file" > "${base}_viral_200.txt"
+    
+    # Extract unique read IDs from each
+    cut -f1 "${base}_viral_150.txt" | sort | uniq > "${base}_viral_150_ids.txt"
+    cut -f1 "${base}_viral_200.txt" | sort | uniq > "${base}_viral_200_ids.txt"
+done
+```
+*DONE 4th Feb 2025*
+
+```{bash prokaryotic subsets}
+#!/bin/bash
+#SBATCH --time=24:00:00
+#SBATCH --account=ucb423_asc2
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=prok_subset
+#SBATCH --error=/scratch/alpine/beyo2625/tiago_genome/scripts/prok_subset.err
+#SBATCH --output=/scratch/alpine/beyo2625/tiago_genome/scripts/prok_subset.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/contam_blast/prok_blast
+for file in *_prok_cont_hits_rr.txt; do
+    base=${file%_prok_cont_hits_rr.txt}
+    
+    # Filter for bit score thresholds
+    awk '$12 > 150' "$file" > "${base}_prok_150.txt"
+    awk '$12 > 200' "$file" > "${base}_prok_200.txt"
+    
+    # Extract unique read IDs from each
+    cut -f1 "${base}_prok_150.txt" | sort | uniq > "${base}_prok_150_ids.txt"
+    cut -f1 "${base}_prok_200.txt" | sort | uniq > "${base}_prok_200_ids.txt"
+done
+```
+
+Okay, so we used the *forward* read for the blasting. Therefore, only have the forward read in the results and need to remove the fwd and rev read. 
+
+Using mes641 as our check file (becuase why not). 
+
+Prok blast -> *J00160:168:H3VM5BBXY:8:1101:10013:23944* (column 1)
+Viral blast -> *J00160:168:H3VM5BBXY:8:1101:10013:23944* (column 1)
+Fwd fasta -> *>J00160:168:H3VM5BBXY:8:1101:13484:1261* 1:N:0:ACCACGACAT+CCGNATACGA
+Rev fasta -> *>J00160:168:H3VM5BBXY:8:1101:13484:1261* 2:N:0:ACCACGACAT+CCGNATACGA
+Fwd fastq -> *@J00160:168:H3VM5BBXY:8:1101:13484:1261* 1:N:0:ACCACGACAT+CCGNATACGA
+Rev fastq -> *@J00160:168:H3VM5BBXY:8:1101:13484:1261* 2:N:0:ACCACGACAT+CCGNATACGA
+
+Okay so first making a combined filter file of the prokaryotic and viral stuff
+
+```{bash makgin combined filtering file}
+cd /scratch/alpine/beyo2625/arthur_truffles/contam_blast
+mkdir contam_filters
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+for PALPAL in $PALMATA
+do
+cat prok_blast/"$PALPAL"_prok_150_ids.txt viral_blast/"$PALPAL"_viral_150_ids.txt \
+| sort \
+| uniq > contam_filters/"$PALPAL"_vp_150_ids.txt
+echo ""$PALPAL" viral and prok bit score 150 combined"
+cat prok_blast/"$PALPAL"_prok_200_ids.txt viral_blast/"$PALPAL"_viral_200_ids.txt \
+| sort \
+| uniq > contam_filters/"$PALPAL"_vp_200_ids.txt
+echo ""$PALPAL" viral and prok bit score 200 combined"
+done
+```
+
+Okay, so we have our filtered files, and now we can make the prokaryotic and viral files for removing from the raw reads woooooo. 
+
+```{bash using seqkit to remove the contaminants}
+#!/bin/bash
+#SBATCH --time=14:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=clean_rr
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/clean_rr.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_blast/loop_err_out/clean_rr.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+export TMP=/scratch/alpine/beyo2625/temp_space
+export TEMP=/scratch/alpine/beyo2625/temp_space
+export TMPDIR=/scratch/alpine/beyo2625/temp_space
+export TEMPDIR=/scratch/alpine/beyo2625/temp_space
+export tmp=/scratch/alpine/beyo2625/temp_space
+export temp_directory=/scratch/alpine/beyo2625/temp_space
+
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate seqkit_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles
+for PALPAL in $PALMATA
+do
+## First 100 bit score filter
+seqkit \
+grep \
+-v \
+-f contam_blast/contam_filters/"$PALPAL"_vp_150_ids.txt \
+-o contam_clean_reads/"$PALPAL"_fwd_150.fastq.gz \
+-j 10 \
+trimmed_reads/all_reads_trimmed/"$PALPAL"_val_1.fq
+
+seqkit \
+grep \
+-v \
+-f contam_blast/contam_filters/"$PALPAL"_vp_150_ids.txt \
+-o contam_clean_reads/"$PALPAL"_rev_150.fastq.gz \
+-j 10 \
+trimmed_reads/all_reads_trimmed/"$PALPAL"_val_2.fq
+
+## second 200 bit score filter
+seqkit \
+grep \
+-v \
+-f contam_blast/contam_filters/"$PALPAL"_vp_200_ids.txt \
+-o contam_clean_reads/"$PALPAL"_fwd_200.fastq.gz \
+-j 10 \
+trimmed_reads/all_reads_trimmed/"$PALPAL"_val_1.fq
+
+seqkit \
+grep \
+-v \
+-f contam_blast/contam_filters/"$PALPAL"_vp_200_ids.txt \
+-o contam_clean_reads/"$PALPAL"_rev_200.fastq.gz \
+-j 10 \
+trimmed_reads/all_reads_trimmed/"$PALPAL"_val_2.fq
+echo ""$PALPAL" processed for 100 and 200 bit scores woooooooooooo"
+done
+```
+*DONE 6th Feb 2025*
+
+So now need to make sure the fwd and rev reads are paired. Then can move on to the assembly and things woop. 
+
+```{bash using seqkit to pair}
+#!/bin/bash
+#SBATCH --time=14:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=clean_rr
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/loop_err_out/pair.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/loop_err_out/pair.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+export TMP=/scratch/alpine/beyo2625/temp_space
+export TEMP=/scratch/alpine/beyo2625/temp_space
+export TMPDIR=/scratch/alpine/beyo2625/temp_space
+export TEMPDIR=/scratch/alpine/beyo2625/temp_space
+export tmp=/scratch/alpine/beyo2625/temp_space
+export temp_directory=/scratch/alpine/beyo2625/temp_space
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate seqkit_env
+
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+cd /scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads
+
+for PALPAL in $PALMATA
+do
+## 150 bit score filter
+seqkit \
+pair \
+-1 "$PALPAL"_fwd_150.fastq.gz \
+-2 "$PALPAL"_rev_150.fastq.gz \
+-u
+## 200 bit score filter
+seqkit \
+pair \
+-1 "$PALPAL"_fwd_200.fastq.gz \
+-2 "$PALPAL"_rev_200.fastq.gz \
+-u
+echo "$PALPAL removed contaminants files are all paired what whattttttttt"
+done
+```
+
+And getting some sumamry stats.  
+NB: This is hella slow, I could for sure write something that makes this way quicker. 
+
+```{bash script for summarising stuff}
+#!/usr/bin/env bash
+set -euo pipefail
+shopt -s nullglob
+
+# === USER ADJUSTABLE ===
+RAW_DIR="/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads"
+TRIM_DIR="/scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads_trimmed"
+CONT_DIR="/scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads"
+OUTFILE="read_summary.tsv"
+
+# Patterns: customize if your naming differs
+# Example assumptions:
+#   raw:    ${sample}_R1.fastq[.gz] and ${sample}_R2.fastq[.gz]
+#   trimmed: ${sample}_R1.trimmed.fastq[.gz] and ${sample}_R2.trimmed.fastq[.gz]
+#   contaminant-removed: ${sample}_clean_R1.fastq[.gz] and ${sample}_clean_R2.fastq[.gz]
+# Modify these suffixes as needed.
+
+# === end user section ===
+
+count_reads_in_file() {
+    local f=$1
+    if [[ ! -e "$f" ]]; then
+        echo 0
+        return
+    fi
+    if [[ "$f" == *.gz ]]; then
+        local lines
+        lines=$(gzip -dc "$f" | wc -l)
+    else
+        local lines
+        lines=$(wc -l < "$f")
+    fi
+    echo $(( lines / 4 ))
+}
+
+# Build sample list (deduplicated base names)
+SAMPLES=$(ls "${RAW_DIR}"/*.fastq* 2>/dev/null | \
+    sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+if [[ -z "$SAMPLES" ]]; then
+    echo "No raw fastq files found in $RAW_DIR. Check paths/patterns." >&2
+    exit 1
+fi
+
+printf "sample\traw_reads\ttrimmed_reads\tcontam_removed_reads_150\tcontam_removed_reads_200\n" > "$OUTFILE"
+
+for sample in $SAMPLES; do
+    # Raw
+    raw_r1=$(ls "${RAW_DIR}/${sample}_R1_paired.fastq"* 2>/dev/null | head -n1 || true)
+    raw_r2=$(ls "${RAW_DIR}/${sample}_R2_paired.fastq"* 2>/dev/null | head -n1 || true)
+    raw1_ct=$(count_reads_in_file "$raw_r1")
+    raw2_ct=$(count_reads_in_file "$raw_r2")
+    raw_total=$(( raw1_ct + raw2_ct ))
+
+    # Trimmed
+    trim_r1=$(ls "${TRIM_DIR}/${sample}_val_1.fq"* 2>/dev/null | head -n1 || true)
+    trim_r2=$(ls "${TRIM_DIR}/${sample}_val_2.fq"* 2>/dev/null | head -n1 || true)
+    trim1_ct=$(count_reads_in_file "$trim_r1")
+    trim2_ct=$(count_reads_in_file "$trim_r2")
+    trim_total=$(( trim1_ct + trim2_ct ))
+
+    # Contaminant removed bit score 100
+    cont_100_r1=$(ls "${CONT_DIR}/${sample}_fwd_150.paired.fastq.gz"* 2>/dev/null | head -n1 || true)
+    cont_100_r2=$(ls "${CONT_DIR}/${sample}_rev_150.paired.fastq.gz"* 2>/dev/null | head -n1 || true)
+    cont1_100_ct=$(count_reads_in_file "$cont_100_r1")
+    cont2_100_ct=$(count_reads_in_file "$cont_100_r2")
+    cont_100_total=$(( cont1_100_ct + cont2_100_ct ))
+    
+    # Contaminant removed bit score 200
+    cont_200_r1=$(ls "${CONT_DIR}/${sample}_fwd_200.paired.fastq.gz"* 2>/dev/null | head -n1 || true)
+    cont_200_r2=$(ls "${CONT_DIR}/${sample}_rev_200.paired.fastq.gz"* 2>/dev/null | head -n1 || true)
+    cont1_200_ct=$(count_reads_in_file "$cont_200_r1")
+    cont2_200_ct=$(count_reads_in_file "$cont_200_r2")
+    cont_200_total=$(( cont1_200_ct + cont2_200_ct ))
+
+    printf "%s\t%d\t%d\t%d\t%d\n" "$sample" "$raw_total" "$trim_total" "$cont_100_total" "$cont_200_total" >> "$OUTFILE"
+done
+
+echo "Summary written to $OUTFILE"
+```
+
+Nano that into a file and run. Need to do on supercomputer as it is slow. 
+
+```{bash job for summary stuff}
+#!/bin/bash
+#SBATCH --time=14:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=5G
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=2
+#SBATCH --job-name=sums
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/loop_err_out/sums.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/loop_err_out/sums.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles
+
+chmod +x samplesum.sh
+./samplesum.sh
+```
+
+
+## 5. Assemblies 
+
+```{bash running all the asms}
+#!/bin/bash
+#SBATCH --time=00:05:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --ntasks=2
+#SBATCH --cpus-per-task=1
+#SBATCH --job-name=spades
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/spades.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/spades.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+# making a list of sample names
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+echo "files being blasted against prok database"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --time=48:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --mem=40G' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --ntasks=10' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --job-name='"$PALPAL"'_spades' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/'"$PALPAL"'_spades.err' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/'"$PALPAL"'_spades.out' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo 'conda activate spades_env' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/spades_asms' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+echo 'mkdir '"${PALPAL}"'_150 '"${PALPAL}"'_200' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+
+echo 'spades.py \
+--meta \
+-1 /scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/'"${PALPAL}"'_fwd_150.paired.fastq.gz \
+-2 /scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/'"${PALPAL}"'_rev_150.paired.fastq.gz \
+--threads 20 \
+--memory 40 \
+-o '"${PALPAL}"'_150' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+
+echo 'spades.py \
+--meta \
+-1 /scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/'"${PALPAL}"'_fwd_200.paired.fastq.gz \
+-2 /scratch/alpine/beyo2625/arthur_truffles/contam_clean_reads/'"${PALPAL}"'_rev_200.paired.fastq.gz \
+--threads 20 \
+--memory 40 \
+-o '"${PALPAL}"'_200' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_spades.sh
+done
+```
+
+And then removing all the small stuff for this analysis. 
+
+```{bash cleaning all nanopore}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=1G
+#SBATCH --job-name=loop_clean
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/loop_cleansort.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/loop_cleansort.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+## making the list of sample names PXX
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+echo "cleaning and sorting for funannotate::predict and BUSCO"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --time=02:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --mem=20G' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --job-name='"$PALPAL"'_cleansort' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/'"$PALPAL"'_cleansort.err' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/'"$PALPAL"'_cleansort.out' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo 'conda activate funannotate_env' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'export TMP=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo 'export TEMP=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo 'export TMPDIR=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo 'export TEMPDIR=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+echo 'export temp_directory=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_150' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'funannotate \
+clean \
+-i scaffolds.fasta \
+-o '"${PALPAL}"'_clean.fasta' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'funannotate \
+sort \
+-i '"${PALPAL}"'_clean.fasta \
+-o '"${PALPAL}"'_clean_sort_150.fasta \
+--minlen 500' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_200' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'funannotate \
+clean \
+-i scaffolds.fasta \
+-o '"${PALPAL}"'_clean.fasta' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+echo 'funannotate \
+sort \
+-i '"${PALPAL}"'_clean.fasta \
+-o '"${PALPAL}"'_clean_sort_200.fasta \
+--minlen 500' >> /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/spades_asms/loop_err_out/"$PALPAL"_cs.sh
+done
+```
+
+
+## 6. Genome Quality Control 
+### 6.1 - BUSCO Analysis
+
+```{bash getting busco dbs}
+mamba activate busco_env
+cd /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/dbs
+busco --list-dataset
+rm -rf *
+busco --download fungi_odb12 ascomycota_odb12
+```
+
+```{bash busco analysis loop script}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=1G
+#SBATCH --job-name=loop_busco
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/loop_busco.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/loop_busco.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+## making the list of sample names PXX
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+### FLYE BUSCO LOOP SCRIPT
+echo "flye::meta assemblies for busco"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --time=12:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --mem=40G' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --ntasks=3' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --job-name='"$PALPAL"'_busco' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/'"$PALPAL"'_flye_busco.err' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/'"$PALPAL"'_flye_busco.out' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'conda activate busco_env' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+echo 'export TMP=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'export TEMP=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'export TMPDIR=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'export TEMPDIR=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'export temp_directory=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/busco_analysis' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+echo 'mkdir '"${PALPAL}"'_150 '"${PALPAL}"'_200 \
+'"${PALPAL}"'_150/asco '"${PALPAL}"'_150/fung \
+'"${PALPAL}"'_200/asco '"${PALPAL}"'_200/fung' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+## 150 for fungi and asco
+echo 'busco \
+-i /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_150/'"${PALPAL}"'_clean_sort_150.fasta \
+-l fungi_odb12 \
+-o '"${PALPAL}"'_150/fung \
+--mode genome \
+--offline \
+--metaeuk \
+--download_path /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/dbs/busco_downloads \
+-f \
+--cpu 6' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+echo 'busco \
+-i /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_150/'"${PALPAL}"'_clean_sort_150.fasta \
+-l ascomycota_odb12 \
+-o '"${PALPAL}"'_150/asco \
+--mode genome \
+--offline \
+--metaeuk \
+--download_path /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/dbs/busco_downloads \
+-f \
+--cpu 6' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+## 200 for fungi and asco
+echo 'busco \
+-i /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_200/'"${PALPAL}"'_clean_sort_200.fasta \
+-l fungi_odb12 \
+-o '"${PALPAL}"'_200/fung \
+--mode genome \
+--offline \
+--metaeuk \
+--download_path /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/dbs/busco_downloads \
+-f \
+--cpu 6' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+echo 'busco \
+-i /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_200/'"${PALPAL}"'_clean_sort_200.fasta \
+-l ascomycota_odb12 \
+-o '"${PALPAL}"'_200/asco \
+--mode genome \
+--offline \
+--metaeuk \
+--download_path /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/dbs/busco_downloads \
+-f \
+--cpu 6' >> /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/busco_analysis/loop_err_out/"$PALPAL"_busco.sh
+done
+```
+
+And now a script to try and make a long dataframe from all the results for `BUSCO`.
+
+```{bash summarising busco results}
+#!/bin/bash
+
+# Base directory
+base_dir="/scratch/alpine/beyo2625/arthur_truffles/busco_analysis"
+
+# Print header
+echo -e "Sample\tDatabase\tMeasure\tValue"
+
+# Loop over each sample directory
+for sample_dir in "$base_dir"/*; do
+    # skip if not a directory
+    [ -d "$sample_dir" ] || continue
+
+    sample=$(basename "$sample_dir")
+
+    # for each database: fung and asco
+    for db in fung asco; do
+        # Path to the short summary txt file
+        summary_file="$sample_dir/$db/short_summary.specific.${db}i_odb12.${db}.txt"
+        
+        # Check file exists
+        if [ -f "$summary_file" ]; then
+            # Extract lines matching BUSCO measures and print them
+            # We'll parse lines with the number + measure + (abbreviation)
+            # Example line: "107     Complete BUSCOs (C)"
+            awk -v sample="$sample" -v db="$db" '
+            /^[[:space:]]*[0-9]+[[:space:]]+Complete BUSCOs/ {
+                print sample"\t"db"\tComplete\t"$1
+            }
+            /^[[:space:]]*[0-9]+[[:space:]]+Complete and single-copy BUSCOs/ {
+                print sample"\t"db"\tComplete_Single_Copy\t"$1
+            }
+            /^[[:space:]]*[0-9]+[[:space:]]+Complete and duplicated BUSCOs/ {
+                print sample"\t"db"\tComplete_Duplicated\t"$1
+            }
+            /^[[:space:]]*[0-9]+[[:space:]]+Fragmented BUSCOs/ {
+                print sample"\t"db"\tFragmented\t"$1
+            }
+            /^[[:space:]]*[0-9]+[[:space:]]+Missing BUSCOs/ {
+                print sample"\t"db"\tMissing\t"$1
+            }
+            /^[[:space:]]*[0-9]+[[:space:]]+Total BUSCO groups searched/ {
+                print sample"\t"db"\tTotal\t"$1
+            }
+            ' "$summary_file"
+        fi
+    done
+done
+```
+
+
+
+## 7. Gene Prediction
+
+So will be using `funannote`. Do not need to do the annotate step luckily, just gene prediction. 
+
+So here is a list of Tuber genomes that have protein evidence, will be using these to make the predictions better. 
+
+https://www.ncbi.nlm.nih.gov/datasets/genome/?taxon=36048
+
+Use probably 3
+**Tuber melanosporium** (NCBI has proteins) - https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000151645.1/
+**Tuber panzhihuanense** (2025) - https://figshare.com/s/a435a5ac8371bcea2cae
+**Tiber indicum** (JGI) - https://mycocosm.jgi.doe.gov/Tubin1_1/Tubin1_1.home.html
+
+```{bash uploading prot evidence}
+scp -r /Users/benyoung/Library/CloudStorage/OneDrive-UCB-O365/projects/arthur_tubme/gene_prediction/prot_evidence/* \
+beyo2625@login.rc.colorado.edu:/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/
+```
+
+
+### 7.1 - Softmasking 
+
+Need to do soft masking first, just using `tantan` that is included with `funannotate`. 
+
+https://gitlab.com/mcfrith/tantan 
+
+```{bash softmasking all asms}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=1G
+#SBATCH --job-name=softmask
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/softmask.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/softmask.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+## making the list of sample names PXX
+PALMATA=$(ls /scratch/alpine/beyo2625/arthur_truffles/trimmed_reads/all_reads/*.fastq | sed -E 's#.*/##; s/_R[12].*//' | sort -u)
+
+### FLYE BUSCO LOOP SCRIPT
+echo "softmasking all assemblies"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --time=18:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --mem=20G' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --ntasks=3' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --job-name='"$PALPAL"'_softm' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/'"$PALPAL"'_softm.err' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/'"$PALPAL"'_softm.out' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'conda activate funannotate_env' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+
+echo 'export TMP=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'export TEMP=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'export TMPDIR=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'export TEMPDIR=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'export temp_directory=/scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'mkdir '"${PALPAL}"'' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+echo 'cd  /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/'"${PALPAL}"'' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+
+echo 'funannotate \
+mask \
+-i /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_150/'"${PALPAL}"'_clean_sort_150.fasta \
+-o /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/'"${PALPAL}"'/'"${PALPAL}"'_cs_150_sm.fasta \
+--cpus 5' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+
+echo 'funannotate \
+mask \
+-i /scratch/alpine/beyo2625/arthur_truffles/spades_asms/'"${PALPAL}"'_200/'"${PALPAL}"'_clean_sort_200.fasta \
+-o /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/'"${PALPAL}"'/'"${PALPAL}"'_cs_200_sm.fasta \
+--cpus 5' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_sm.sh
+done
+```
+
+We get three failures for soft masking.
+- *tutex* -> this had contigs only <500, so there is nothing in the cleaned and sorted fasta file. 
+- *ag340* -> this had contigs only <500, so there is nothing in the cleaned and sorted fasta file. 
+- *jt4453* -> this had contigs only <500, so there is nothing in the cleaned and sorted fasta file. 
+
+So that is three less samples. 
+
+
+### 7.2 - Gene Prediction
+
+Okay so the sample names are the same as the isolates here so yay.   
+For the species and name, I have made these in a column in an excel, and we can just specify to read each line as a iteration of the loop.  
+
+```{bash funannotate predict}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=1G
+#SBATCH --job-name=loop_funpred
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/fun_pred.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/fun_pred.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+## Load variables from TSV file
+PALMATA=()
+ISOLATE=()
+SPECIES=()
+NAME=()
+
+while IFS=$'\t' read -r filename Genus_species Funannotate_name; do
+    PALMATA+=("$filename")
+    ISOLATE+=("$filename")
+    SPECIES+=("$Genus_species")
+    NAME+=("$Funannotate_name")
+done < <(tail -n +2 /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/metadata.tsv)
+
+echo "Running funnnotate::predict with sorted and cleaned soft masked genome assemblies"
+echo $PALMATA
+
+for i in "${!PALMATA[@]}"; do
+    PALPAL="${PALMATA[i]}"
+    SPE="${SPECIES[i]}"
+    ISO="${ISOLATE[i]}"
+    NAM="${NAME[i]}"
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --time=15:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --mem=20G' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --job-name='"$PALPAL"'_predict' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/'"$PALPAL"'_funpred.err' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/'"$PALPAL"'_funpred.out' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo 'conda activate funannotate_env' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/'"${PALPAL}"'' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+
+echo 'rm -rf '"${PALPAL}"'_150_predict' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+echo 'rm -rf '"${PALPAL}"'_200_predict' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+
+echo 'funannotate \
+predict \
+-i '"${PALPAL}"'_cs_150_sm.fasta \
+-o '"${PALPAL}"'_150_predict \
+-s '"${SPE}"' \
+--isolate '"${ISO}"' \
+--genemark_gtf /dev/null \
+--name '"${NAM}"' \
+--augustus_species fusarium_graminearum \
+--protein_evidence /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/Gesc.proteins.fa \
+/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/Tubermelo_protein.faa \
+/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/Tubin1_1_GeneCatalog_proteins_20190713.aa.fasta \
+$FUNANNOTATE_DB/uniprot_sprot.fasta \
+--optimize_augustus \
+--busco_db ascomycota \
+--organism fungus \
+--ploidy 1 \
+--keep_evm \
+--cpus 10 \
+--tmpdir /scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+
+echo 'funannotate \
+predict \
+-i '"${PALPAL}"'_cs_200_sm.fasta \
+-o '"${PALPAL}"'_200_predict \
+-s '"${SPE}"' \
+--isolate '"${ISO}"' \
+--name '"${NAM}"' \
+--genemark_gtf /dev/null \
+--augustus_species fusarium_graminearum \
+--protein_evidence /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/Gesc.proteins.fa \
+/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/Tubermelo_protein.faa \
+/scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/prot_evidence/Tubin1_1_GeneCatalog_proteins_20190713.aa.fasta \
+$FUNANNOTATE_DB/uniprot_sprot.fasta \
+--optimize_augustus \
+--busco_db ascomycota \
+--organism fungus \
+--ploidy 1 \
+--keep_evm \
+--cpus 10 \
+--tmpdir /scratch/alpine/beyo2625/temp_space' >> /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+
+sbatch /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton/loop_err_out/"$PALPAL"_funpred.sh
+done
+```
+
+Can also put `--weights genemark:0` to stop that if you want. 
+
+Alishas original code 
+`singularity run  --bind /scratch/alpine /projects/caqu8258/software/build/funannotate_1.8.8/funannotate.sif funannotate predict -i zb3935_masked_sorted_cleaned.fas --name TubZB3935 -o zb3935_predicted.gbk --augustus_species "fusarium_graminearum" --species "Tuber_ZB3935" --cpus $SLURM_NTASKS --force --protein_evidence Tubme.fasta`
+
+We get three failures for soft masking.  
+- *ag340* -> fails, knew this would due to earlier reasons  
+- *jt4453* -> fails, knew this would due to earlier reasons  
+- *tutex* -> fails, knew this would due to earlier reasons  
+
+Gene prediciton failures  
+- ag340 -> No assembly (low reads to start, failed sequencing/library)  
+- ag352 -> Poor assembly (0 busco, low reads to start)  
+- bc64 -> Poor assembly (0 busco, low reads to start)  
+- tr117 -> Poor assembly (0 busco, low reads to start)  
+- tutex -> No assembly (low reads to start, failed sequencing/library)  
+- zb1227 -> Poor assembly (0 busco, low reads to start)  
+- mes810 -> poor assembly (0 busco, low reads to start)  
+- zb3441 -> poor assembly (0 busco, low reads to start)  
+
+Getting the summary results for out metadata file. This uses all the .err files from the slurm script which are in the loop_err_out directory. 
+
+```{bash summary res from fun predict error file, include = F}
+echo -e "Sample\tTotal_gene_models_150\tGene_models_150\ttRNA_150\tTotal_gene_models_200\tGene_models_200\ttRNA_200" > funannotate_summary.tsv
+for file in *_funpred.err; do
+  sample=$(basename "$file" \
+  | cut -d_ -f1)
+  # Grab the two 'Collecting final annotation files for X total gene models' lines
+  total=($(grep "Collecting final annotation files for" "$file" \
+  | grep -oP '[\d,]+(?= total gene models)'))
+  # Grab the two 'gene models remaining' lines 
+  remain=($(grep "gene models remaining" "$file" \
+  | grep -oP '[\d,]+(?= gene models remaining)'))
+  # Grab the two 'tRNAscan models are valid' lines
+  trnas=($(grep "tRNAscan models are valid" "$file" \
+  | grep -oP '^\[\w+.*?\]: \K\d+'))
+  # Assign values with fallback to NA
+  t150=${total[0]:-NA}
+  g150=${remain[0]:-NA}
+  trna150=${trnas[0]:-NA}
+  t200=${total[1]:-NA}
+  g200=${remain[1]:-NA}
+  trna200=${trnas[1]:-NA}
+  echo -e "$sample\t$t150\t$g150\t$trna150\t$t200\t$g200\t$trna200" >> funannotate_summary.tsv
+done
+```
+
+
+## 8. Protein Ortho 
+### 8.1 - Cleaning and sorting stuff. 
+
+Okay so we are going to use the 200 bit score database. My rational, gives a few more genes and may remove false positives from the bit score removal (i.e. 150 is lower and may capture things which are eukaryotic but got removed).  
+
+For the 200 bit score, we will do a protein ortho for samples with >1000 genes, and one for one with >500 genes. Actually, on second thoughts, we will do all, everything is >400 genes (bar one sample) so we should be good. Can then assess the results and see what is up.  
+
+NOTE: Remove samples as per Arthur instructions. 
+- rh722  
+- rh1006  
+- ag335  
+
+Copying stuff first 
+
+```{bash}
+cd /scratch/alpine/beyo2625/arthur_truffles/gene_prediciton
+for d in */*_200_predict
+do cp "$d/predict_results/"*.proteins.fa ../predict_trees/protein_fastas/
+done
+```
+cp: cannot stat 'ag340/ag340_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'ag352/ag352_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'bc64/bc64_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'jt4453/jt4453_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'mes810/mes810_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'tr117/tr117_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'tutex/tutex_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'zb1227/zb1227_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+cp: cannot stat 'zb3441/zb3441_200_predict/predict_results/*.proteins.fa': No such file or directory -> FAILED GP  
+
+```{bash renaming to get sample names}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/protein_fastas/
+for f in *.proteins.fa; do
+  new=$(echo "$f" | sed -E 's/.*_([^_]+)\.proteins\.fa$/\1.proteins.fa/')
+  mv "$f" "$new"
+done
+```
+
+Nice, and just need to rename two of them with the - in them,  remove the 12 gene one (zb3096), and remove the ones Arthur said to. 
+
+```{bash renaming 2 weird ones}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/protein_fastas
+mv am11-26.proteins.fa am1126.proteins.fa
+mv no-name.proteins.fa noname.proteins.fa
+mv k109-2.proteins.fa k1092.proteins.fa
+rm -rf zb3096*
+rm -rf rh1006.proteins.fa ag335.proteins.fa rh722.proteins.fa 
+```
+
+Lovely, and now renaming all the proteins in everything so it is straightforward for programs. 
+
+```{bash renaming proteins}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/protein_fastas
+for file in *.proteins.fa; do
+    prefix="${file%.proteins.fa}"
+    output="${prefix}_modified.fa"
+    awk -v prefix="$prefix" 'BEGIN { i=1 }
+    /^>/ {
+        print ">" prefix "_" i "|"
+        i++
+        next
+    }
+    { print }' "$file" > ../modified_prots/"$output"
+    echo "Processed $file -> $output"
+done
+```
+
+Okay, all looks good wonderful. Now we can run `proteinortho` on these. That is 83 samples yayyyyyyyyyy. 
+
+
+### 8.2 - ProteinOrtho All Samples
+
+```{bash running protein ortho}
+#!/bin/bash
+#SBATCH --time=24:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --job-name=protortho
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/prot_ortho/protortho_all.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/prot_ortho/protortho_all.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate proteinorthoold_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/prot_ortho
+
+proteinortho6.pl \
+-project=tubme \
+-cpus=20 \
+--temp=/scratch/alpine/beyo2625/temp_space \
+/scratch/alpine/beyo2625/arthur_truffles/predict_trees/modified_prots/*.fa
+```
+
+
+### 8.3 - Extracting ProtOrtho Results
+
+```{bash identyfying how many proteomes we have}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/modified_prots
+ls *.fa | wc -l
+```
+
+We have 80 samples included in the `proteinortho`
+
+```{bash getting SCO from the protein ortho results}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/prot_ortho
+grep $'^80\t80' tubme.proteinortho.tsv > SCO_all.txt
+wc -l SCO_all.txt
+```
+
+That gives 69, so we have 69 single copy orthologs to build a tree with. Not ideal. 
+
+Working out some percentages for SCO > x species
+
+```{r working out percentages}
+(80/100) * 95
+(80/100) * 90
+(80/100) * 85
+(80/100) * 80
+(80/100) * 75
+(80/100) * 70
+(80/100) * 65
+(80/100) * 60
+(80/100) * 55
+(80/100) * 50
+```
+
+```{bash SCOs in at least 90 percent of species}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/prot_ortho
+awk '$1 == $2 && $1 > 76' tubme.proteinortho.tsv > SCO_great95.txt ##95%
+awk '$1 == $2 && $1 > 72' tubme.proteinortho.tsv > SCO_great90.txt ##90%
+awk '$1 == $2 && $1 > 68' tubme.proteinortho.tsv > SCO_great85.txt ##85%
+awk '$1 == $2 && $1 > 64' tubme.proteinortho.tsv > SCO_great80.txt ##80%
+awk '$1 == $2 && $1 > 60' tubme.proteinortho.tsv > SCO_great75.txt ##75%
+awk '$1 == $2 && $1 > 56' tubme.proteinortho.tsv > SCO_great70.txt ##70%
+awk '$1 == $2 && $1 > 52' tubme.proteinortho.tsv > SCO_great65.txt ##65%
+awk '$1 == $2 && $1 > 48' tubme.proteinortho.tsv > SCO_great60.txt ##60%
+awk '$1 == $2 && $1 > 44' tubme.proteinortho.tsv > SCO_great55.txt ##55%
+awk '$1 == $2 && $1 > 40' tubme.proteinortho.tsv > SCO_great50.txt ##50%
+wc -l *.txt
+```
+*DONE 21st July 2025*
+
+95% - greater 76 species, SCOs is 310
+90% - greater 72 species, SCOs is 370
+85% - greater 68 species, SCOs is 387
+80% - greater 64 species, SCOs is 394
+75% - greater 60 species, SCOs is 398
+70% - greater 56 species, SCOs is 401
+65% - greater 52 species, SCOs is 413
+60% - greater 48 species, SCOs is 443
+55% - greater 44 species, SCOs is 467
+50% - greater 40 species, SCOs is 515
+
+69 SCO_all.txt
+515 SCO_great50.txt
+467 SCO_great55.txt
+443 SCO_great60.txt
+413 SCO_great65.txt
+401 SCO_great70.txt
+398 SCO_great75.txt
+394 SCO_great80.txt
+387 SCO_great85.txt
+370 SCO_great90.txt
+310 SCO_great95.txt
+4167 total
+
+So we will progress with SCO, 95%, and 90%, and 85%.
+- 69 (all)
+- 310 SCO (95%)
+- 370 SCO (90%)
+- 387 SCO (85%)
+
+```{bash downloading the pro ortho results and generated files}
+scp -r beyo2625@login.rc.colorado.edu:/scratch/alpine/beyo2625/arthur_truffles/predict_trees/prot_ortho/\* \
+/Users/benyoung/Library/CloudStorage/OneDrive-UCB-O365/projects/arthur_tubme/asm_pipeline/protein_ortho
+```
+
+```{bash making all the directories}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+mkdir sco_all sco_g95 sco_g90 sco_g85 \
+sco_align_all sco_align_g95 sco_align_g90 sco_align_g85 \
+sco_clean_all sco_clean_g95 sco_clean_g90 sco_clean_g85 \
+sco_comp_all sco_comp_g95 sco_comp_g90 sco_comp_g85 \
+raxml_all raxml_g95 raxml_g90 raxml_g85
+```
+
+```{bash all SCOs}
+#!/bin/bash
+#SBATCH --time=12:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=50G
+#SBATCH --job-name=grabprots_all
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_all/grabprots_all.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_all/grabprots_all.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate proteinortho_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+proteinortho_grab_proteins.pl \
+-exact \
+-cpus=20 \
+-tofiles=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_all \
+prot_ortho/SCO_all.txt \
+modified_prots/*_modified.fa
+```
+
+```{bash 95 percent SCOs}
+#!/bin/bash
+#SBATCH --time=12:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=50G
+#SBATCH --job-name=grabprots_g95
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g95/grabprots.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g95/grabprots.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate proteinortho_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+proteinortho_grab_proteins.pl \
+-exact \
+-cpus=20 \
+-tofiles=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g95 \
+prot_ortho/SCO_great95.txt \
+modified_prots/*_modified.fa
+```
+
+```{bash 90 percent SCOs}
+#!/bin/bash
+#SBATCH --time=12:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=50G
+#SBATCH --job-name=grabprots_g90
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g90/grabprots.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g90/grabprots.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate proteinortho_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+proteinortho_grab_proteins.pl \
+-exact \
+-cpus=20 \
+-tofiles=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g90 \
+prot_ortho/SCO_great90.txt \
+modified_prots/*_modified.fa
+```
+
+```{bash 85 percent SCOs}
+#!/bin/bash
+#SBATCH --time=12:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=50G
+#SBATCH --job-name=grabprots_g85
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g85/grabprots_g85.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g85/grabprots_g85.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=10
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate proteinortho_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+proteinortho_grab_proteins.pl \
+-exact \
+-cpus=20 \
+-tofiles=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g85 \
+prot_ortho/SCO_great85.txt \
+modified_prots/*_modified.fa
+```
+
+
+## 9. Alignment 
+### 9.1 - SCO Align ALL
+
+```{bash alining only SCOs in all}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --job-name=muscle_all
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/muscle.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/muscle.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_all
+PALMATA=$(ls *.fasta)
+
+echo "files going through mucle5 alignment"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --time=06:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mem=10G' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --job-name='"$PALPAL"'_muscle' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/'"$PALPAL"'_muscle.err' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/'"$PALPAL"'_muscle.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+echo 'conda activate muscle_env' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'muscle \
+-super5 sco_all/'"${PALPAL}"' \
+-output sco_align_all/'"${PALPAL}"'.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+sbatch /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all/loop_err_out/"$PALPAL"_muscle.sh
+done
+```
+
+```{bash checking to make sure all files processed all}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all
+ls *.out | wc -l
+## gives 69 (niiiiiiice) yay
+```
+
+
+### 3.2 - SCO Align g95
+
+```{bash alining only SCOs in 95 percent or greater}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --job-name=muscle_g95
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/muscle.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/muscle.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g95
+PALMATA=$(ls *.fasta)
+
+echo "files going through mucle5 alignment"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --time=06:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mem=10G' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --job-name='"$PALPAL"'_muscle' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/'"$PALPAL"'_muscle.err' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/'"$PALPAL"'_muscle.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+echo 'conda activate muscle_env' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'muscle \
+-super5 sco_g95/'"${PALPAL}"' \
+-output sco_align_g95/'"${PALPAL}"'.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+sbatch /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95/loop_err_out/"$PALPAL"_muscle.sh
+done
+```
+
+```{bash checking to make sure all files processed g95}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95
+ls *.out | wc -l
+## gives 310 yay
+```
+
+
+### 3.3 - SCO Align g90
+
+```{bash alining only SCOs in 90 percent or greater}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --job-name=muscle_g90
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/muscle.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/muscle.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g90
+PALMATA=$(ls *.fasta)
+
+echo "files going through mucle5 alignment"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --time=06:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mem=10G' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --job-name='"$PALPAL"'_muscle' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/'"$PALPAL"'_muscle.err' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/'"$PALPAL"'_muscle.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+echo 'conda activate muscle_env' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'muscle \
+-super5 sco_g90/'"${PALPAL}"' \
+-output sco_align_g90/'"${PALPAL}"'.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+sbatch /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90/loop_err_out/"$PALPAL"_muscle.sh
+done
+```
+
+```{bash checking to make sure all files processed g90}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90
+ls *.out | wc -l
+## gives xx yay
+```
+
+
+### 3.4 - SCO Align g85
+
+```{bash alining only SCOs in g85 percent or greater}
+#!/bin/bash
+#SBATCH --time=00:10:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=2G
+#SBATCH --job-name=muscle_g85
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/muscle.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/muscle.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_g85
+PALMATA=$(ls *.fasta)
+
+echo "files going through mucle5 alignment"
+echo $PALMATA
+
+for PALPAL in $PALMATA
+do
+echo "$PALPAL"
+echo '#!/bin/bash' > /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --account=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --time=06:00:00' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --partition=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --qos=blanca-qsmicrobes' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --nodes=1' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mem=10G' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --ntasks=5' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --cpus-per-task=2' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --job-name='"$PALPAL"'_muscle' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/'"$PALPAL"'_muscle.err' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/'"$PALPAL"'_muscle.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-type=ALL' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo '#SBATCH --mail-user=beyo2625@colorado.edu' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'module purge' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo 'eval "$(conda shell.bash hook)"' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+echo 'conda activate muscle_env' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+
+echo 'muscle \
+-super5 sco_g85/'"${PALPAL}"' \
+-output sco_align_g85/'"${PALPAL}"'.out' >> /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+sbatch /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85/loop_err_out/"$PALPAL"_muscle.sh
+done
+```
+
+```{bash checking to make sure all files processed g85}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85
+ls *.out | wc -l
+## gives 387 yay
+```
+
+
+## 10. Cleaning alignments
+### 10.1 - Cleaning all Alignments
+
+```{bash all trimal}
+mamba activate trimal_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_all
+PALMATA=$(ls *.out)
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+for PALPAL in $PALMATA
+do
+trimal \
+-in sco_align_all/"$PALPAL" \
+-out sco_clean_all/"$PALPAL".trim \
+-gappyout
+done
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_all
+ls *.trim | wc -l
+## gives 69 yay
+```
+
+
+### 10.2 - Cleaning g95
+
+```{bash all trimal g95}
+mamba activate trimal_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g95
+PALMATA=$(ls *.out)
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+for PALPAL in $PALMATA
+do
+trimal \
+-in sco_align_g95/"$PALPAL" \
+-out sco_clean_g95/"$PALPAL".trim \
+-gappyout
+done
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_g95
+ls *.trim | wc -l
+## gives 310 yay
+```
+
+
+### 10.3 - Cleaning g90 
+
+```{bash all trimal g90}
+mamba activate trimal_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g90
+PALMATA=$(ls *.out)
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+for PALPAL in $PALMATA
+do
+trimal \
+-in sco_align_g90/"$PALPAL" \
+-out sco_clean_g90/"$PALPAL".trim \
+-gappyout
+done
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_g90
+ls *.trim | wc -l
+## gives 370 yay
+```
+
+
+### 10.4 - Cleaning g85
+
+```{bash all trimal g85}
+mamba activate trimal_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_align_g85
+PALMATA=$(ls *.out)
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+for PALPAL in $PALMATA
+do
+trimal \
+-in sco_align_g85/"$PALPAL" \
+-out sco_clean_g85/"$PALPAL".trim \
+-gappyout
+done
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_g85
+ls *.trim | wc -l
+## gives 387 yay
+```
+
+
+## 11. Creating Expected and Species Files
+
+So for the all we not need to complete anything yay (i.e. it is true SCO). We do need to do for the other 3. 
+
+```{bash making master species list for all}
+# Create canonical species list from modified protein files
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+mkdir analysis_lists
+
+ls modified_prots/*_modified.fa \
+  | sed 's|modified_prots/||; s|\.names_modified\.fa||' \
+  | sort > analysis_lists/species_list.txt
+
+echo "Total expected species: $(wc -l < analysis_lists/species_list.txt)"
+## Total expected species: 80, yayyyyyyyyyyyy
+```
+
+```{bash getting the species in each percentage ortholog for all}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+for threshold in all g95 g90 g85; do
+  echo "Processing $threshold"
+
+  cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_${threshold}
+
+  cat *.fasta.out.trim \
+    | grep "^>" \
+    | tr "_" "\t" \
+    | cut -f1 \
+    | sed 's/^>//' \
+    | sort \
+    | uniq \
+    > /scratch/alpine/beyo2625/arthur_truffles/predict_trees/analysis_lists/species_with_sco_${threshold}.txt
+
+  echo "  Species with SCOs in $threshold: $(wc -l < ../analysis_lists/species_with_sco_${threshold}.txt)"
+done
+```
+Processing all
+  Species with SCOs in all: 80
+Processing g95
+  Species with SCOs in g95: 80
+Processing g90
+  Species with SCOs in g90: 80
+Processing g85
+  Species with SCOs in g85: 80
+
+Everyting in all of these so we can move on woop. Only need to complete the percentage ones. 
+
+
+### 11.1 - Completing g95
+
+```{bash completing the orthogroups so all species present with padding sequences g95}
+# Path to required things
+species_file="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/analysis_lists/species_with_sco_g95.txt"
+orthogroup_dir="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_g95"
+output_dir="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g95"
+line_length=60
+
+for orthogroup in "$orthogroup_dir"/*.out.trim; do
+    echo "Processing $orthogroup"
+    
+    # Extract existing species from the orthogroup file
+    existing_species=$(grep ">" "$orthogroup" | sed 's/>//; s/_.*//')
+
+    # Read species into an array
+    readarray -t all_species < "$species_file"
+
+    # Create an array to hold missing species
+    missing_species=()
+
+    # Identify missing species
+    for species in "${all_species[@]}"; do
+        if ! printf '%s\n' "${existing_species[@]}" | grep -q "^$species$"; then
+            missing_species+=("$species")
+        fi
+    done
+
+    # Get the maximum length of sequences in the orthogroup
+    max_length=0
+    current_length=0
+    while read -r line; do
+        if [[ "$line" == \>* ]]; then
+            if (( current_length > max_length )); then
+                max_length=$current_length
+            fi
+            current_length=0  # Reset for next sequence
+        else
+            current_length=$((current_length + ${#line}))
+        fi
+    done < "$orthogroup"
+
+    # Check the last sequence's length
+    if (( current_length > max_length )); then
+        max_length=$current_length
+    fi
+
+    # Create a new file path for the modified orthogroup
+    output_file="$output_dir/$(basename "$orthogroup")"
+
+    # Copy the original orthogroup content to the new file
+    cp "$orthogroup" "$output_file"
+
+    # Add missing species to the new orthogroup file
+    for species in "${missing_species[@]}"; do
+        echo "Adding missing species: $species"
+        # Add species header
+        echo ">${species}_00|" >> "$output_file"
+        
+        # Create the padded sequence with dashes
+        padding=$(printf '%*s' "$max_length" | tr ' ' '-')
+
+        # Split the padded sequence into lines of 60 characters
+        while [ -n "$padding" ]; do
+            echo "${padding:0:60}" >> "$output_file"
+            padding="${padding:60}"
+        done
+    done
+done
+```
+
+```{bash checking all have the correct number of species in them g95}
+for f in /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g95/*.trim; do
+  echo "File: $f"
+  # Extract header lines, get species IDs before first underscore, unique count
+  count=$(grep "^>" "$f" \
+    | sed 's/^>//' \
+    | cut -d"_" -f1 \
+    | sort -u \
+    | wc -l)
+  echo "Unique species count: $count"
+done
+## all have 80 in them
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g95
+ls | wc -l
+## 310, yay
+```
+
+Now just testing a few to make sure everything looks good
+
+```{bash shows whether all the sequences are the same length for each orthogroup g95}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g95
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat95.txt.OrthoGroup47.fasta.out.trim
+## all the same
+
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat95.txt.OrthoGroup37.fasta.out.trim
+## all the same
+
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat95.txt.OrthoGroup12.fasta.out.trim
+## all the same
+```
+
+
+### 11.2 - Completing g90
+
+```{bash completing the orthogroups so all species present with padding sequences g90}
+# Path to required things
+species_file="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/analysis_lists/species_with_sco_g90.txt"
+orthogroup_dir="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_g90"
+output_dir="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g90"
+line_length=60
+
+for orthogroup in "$orthogroup_dir"/*.out.trim; do
+    echo "Processing $orthogroup"
+    
+    # Extract existing species from the orthogroup file
+    existing_species=$(grep ">" "$orthogroup" | sed 's/>//; s/_.*//')
+
+    # Read species into an array
+    readarray -t all_species < "$species_file"
+
+    # Create an array to hold missing species
+    missing_species=()
+
+    # Identify missing species
+    for species in "${all_species[@]}"; do
+        if ! printf '%s\n' "${existing_species[@]}" | grep -q "^$species$"; then
+            missing_species+=("$species")
+        fi
+    done
+
+    # Get the maximum length of sequences in the orthogroup
+    max_length=0
+    current_length=0
+    while read -r line; do
+        if [[ "$line" == \>* ]]; then
+            if (( current_length > max_length )); then
+                max_length=$current_length
+            fi
+            current_length=0  # Reset for next sequence
+        else
+            current_length=$((current_length + ${#line}))
+        fi
+    done < "$orthogroup"
+
+    # Check the last sequence's length
+    if (( current_length > max_length )); then
+        max_length=$current_length
+    fi
+
+    # Create a new file path for the modified orthogroup
+    output_file="$output_dir/$(basename "$orthogroup")"
+
+    # Copy the original orthogroup content to the new file
+    cp "$orthogroup" "$output_file"
+
+    # Add missing species to the new orthogroup file
+    for species in "${missing_species[@]}"; do
+        echo "Adding missing species: $species"
+        # Add species header
+        echo ">${species}_00|" >> "$output_file"
+        
+        # Create the padded sequence with dashes
+        padding=$(printf '%*s' "$max_length" | tr ' ' '-')
+
+        # Split the padded sequence into lines of 60 characters
+        while [ -n "$padding" ]; do
+            echo "${padding:0:60}" >> "$output_file"
+            padding="${padding:60}"
+        done
+    done
+done
+```
+
+```{bash checking all have the correct number of species in them g90}
+for f in /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g90/*.trim; do
+  echo "File: $f"
+  # Extract header lines, get species IDs before first underscore, unique count
+  count=$(grep "^>" "$f" \
+    | sed 's/^>//' \
+    | cut -d"_" -f1 \
+    | sort -u \
+    | wc -l)
+  echo "Unique species count: $count"
+done
+## all have 80 in them
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g90
+ls | wc -l
+## 370, yay
+```
+
+Now just testing a few to make sure everything looks good
+
+```{bash shows whether all the sequences are the same length for each orthogroup g90}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g90
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat90.txt.OrthoGroup340.fasta.out.trim
+## all the same
+
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat90.txt.OrthoGroup200.fasta.out.trim
+## all the same
+
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat90.txt.OrthoGroup100.fasta.out.trim
+## all the same
+```
+
+
+### 11.3 - Completing g85
+
+```{bash completing the orthogroups so all species present with padding sequences g85}
+# Path to required things
+species_file="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/analysis_lists/species_with_sco_g85.txt"
+orthogroup_dir="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_clean_g85"
+output_dir="/scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g85"
+line_length=60
+
+for orthogroup in "$orthogroup_dir"/*.out.trim; do
+    echo "Processing $orthogroup"
+    
+    # Extract existing species from the orthogroup file
+    existing_species=$(grep ">" "$orthogroup" | sed 's/>//; s/_.*//')
+
+    # Read species into an array
+    readarray -t all_species < "$species_file"
+
+    # Create an array to hold missing species
+    missing_species=()
+
+    # Identify missing species
+    for species in "${all_species[@]}"; do
+        if ! printf '%s\n' "${existing_species[@]}" | grep -q "^$species$"; then
+            missing_species+=("$species")
+        fi
+    done
+
+    # Get the maximum length of sequences in the orthogroup
+    max_length=0
+    current_length=0
+    while read -r line; do
+        if [[ "$line" == \>* ]]; then
+            if (( current_length > max_length )); then
+                max_length=$current_length
+            fi
+            current_length=0  # Reset for next sequence
+        else
+            current_length=$((current_length + ${#line}))
+        fi
+    done < "$orthogroup"
+
+    # Check the last sequence's length
+    if (( current_length > max_length )); then
+        max_length=$current_length
+    fi
+
+    # Create a new file path for the modified orthogroup
+    output_file="$output_dir/$(basename "$orthogroup")"
+
+    # Copy the original orthogroup content to the new file
+    cp "$orthogroup" "$output_file"
+
+    # Add missing species to the new orthogroup file
+    for species in "${missing_species[@]}"; do
+        echo "Adding missing species: $species"
+        # Add species header
+        echo ">${species}_00|" >> "$output_file"
+        
+        # Create the padded sequence with dashes
+        padding=$(printf '%*s' "$max_length" | tr ' ' '-')
+
+        # Split the padded sequence into lines of 60 characters
+        while [ -n "$padding" ]; do
+            echo "${padding:0:60}" >> "$output_file"
+            padding="${padding:60}"
+        done
+    done
+done
+```
+
+```{bash checking all have the correct number of species in them g85}
+for f in /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g85/*.trim; do
+  echo "File: $f"
+  # Extract header lines, get species IDs before first underscore, unique count
+  count=$(grep "^>" "$f" \
+    | sed 's/^>//' \
+    | cut -d"_" -f1 \
+    | sort -u \
+    | wc -l)
+  echo "Unique species count: $count"
+done
+## all have 80 in them
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g85
+ls | wc -l
+## 387, yay
+```
+
+Now just testing a few to make sure everything looks good
+
+```{bash shows whether all the sequences are the same length for each orthogroup g85}
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/sco_comp_g85
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat85.txt.OrthoGroup100.fasta.out.trim
+## all the same
+
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat85.txt.OrthoGroup200.fasta.out.trim
+## all the same
+
+awk '/^>/ { if (seqlen > 0) print header, seqlen; header=$0; seqlen=0; next } { seqlen += length($0) } END { if (seqlen > 0) print header, seqlen }' SCOgreat85.txt.OrthoGroup350.fasta.out.trim
+## all the same
+```
+
+
+## 12. Concatenation
+
+So that does not give one sequence for each species, it keeps it split up. A modified script called `combine.pl` that i have made woop. 
+
+Concatenates, and also prints out the lengths to make sure everyting is good. 
+
+Species headers in orthogroups are >species_number|
+
+```{bash script for combining that i wrote so proud much wo}
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+# Check command-line arguments
+my ($expected_file, $output_file, @ortholog_files) = @ARGV;
+die("Usage: $0 <expected_file> <output_file> <ortholog_files...>\n") unless @ortholog_files;
+
+# Read expected species identifiers
+my %expected;
+open(my $efh, '<', $expected_file) or die "Could not open '$expected_file': $!";
+while (<$efh>) {
+    chomp;
+    s/^>//;  # Remove '>'
+    $expected{$_} = "";  # Initialize with empty string
+}
+close($efh);
+
+# Concatenate sequences for each species
+foreach my $ortholog_file (@ortholog_files) {
+    open(my $ofh, '<', $ortholog_file) or die "Could not open '$ortholog_file': $!";
+    my $current_species = '';
+    my $current_sequence = '';
+
+    while (<$ofh>) {
+        chomp;
+        if (/^>(\S+)_(\d+)\|/) {
+            # If we encounter a new header, save the current species sequence
+            if ($current_species && exists $expected{$current_species}) {
+                $expected{$current_species} .= $current_sequence;  # Append sequence
+            }
+
+            $current_species = $1;  # Get species name (spp)
+            $current_sequence = '';  # Reset for new species
+        } elsif ($current_species) {
+            $current_sequence .= $_;  # Build sequence
+        }
+    }
+
+    # Save the last species sequence
+    if ($current_species && exists $expected{$current_species}) {
+        $expected{$current_species} .= $current_sequence;
+    }
+
+    close($ofh);
+}
+
+# Write concatenated sequences and their lengths to output file
+open(my $outfh, '>', $output_file) or die "Could not open '$output_file': $!";
+foreach my $species (keys %expected) {
+    my $sequence = $expected{$species};
+    my $length = length($sequence);  # Get length of the concatenated sequence
+    print $outfh ">$species\n$sequence\n";  # Write species and its concatenated sequence
+    print "$species: $length bp\n";  # Print length to console
+}
+close($outfh);
+
+print "Concatenated FASTA file created: $output_file\n";
+```
+
+Command info
+
+```{bash SCO for all}
+mamba activate bioperl_env
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+./combine.pl \
+analysis_lists/species_with_sco_all.txt \
+concat_sco_all.fasta \
+sco_clean_all/SCOall.txt.OrthoGroup*
+```
+Concat length: 42,911 bp (69 SCO). 
+
+```{bash SCO for greater than 95 percent}
+mamba activate bioperl_env
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+./combine.pl \
+analysis_lists/species_with_sco_g95.txt \
+concat_sco_g95.fasta \
+sco_comp_g95/SCOgreat95.txt.OrthoGroup*
+```
+Concat length: 202,736 bp (310 orthologs)
+
+```{bash SCO for greater than 90 percent}
+mamba activate bioperl_env
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+./combine.pl \
+analysis_lists/species_with_sco_g90.txt \
+concat_sco_g90.fasta \
+sco_comp_g90/SCOgreat90.txt.OrthoGroup*
+```
+Concat length: 239,864 bp (370 orthologs)
+
+```{bash SCO for greater than 85 percent}
+mamba activate bioperl_env
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees
+
+./combine.pl \
+analysis_lists/species_with_sco_g85.txt \
+concat_sco_g85.fasta \
+sco_comp_g85/SCOgreat85.txt.OrthoGroup*
+```
+Concat length: 250,299 bp (387 orthologs)
+
+
+## 13. RAXML Time
+### 13.1 - SCO ALL
+
+```{bash running the all with three root}
+#!/bin/bash
+#SBATCH --time=168:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --job-name=raxml_all
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_all/raxml_dr.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_all/raxml_dr.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=15
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate raxml_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_all
+
+raxmlHPC-PTHREADS-AVX2 \
+-f a \
+-s ../concat_sco_all.fasta \
+-n tubme_scoall_100bs_3root \
+-m PROTGAMMAAUTO \
+-x 8212 \
+-N 100 \
+-p 1176 \
+-T 30 \
+-o rh1988,ag342,rh721
+```
+
+```{bash downloading raxml all three root}
+scp -r beyo2625@login.rc.colorado.edu:/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_all \
+/Users/benyoung/Library/CloudStorage/OneDrive-UCB-O365/projects/arthur_tubme/asm_pipeline
+```
+
+### 13.2 - SCO g95
+
+```{bash running g95 with root}
+#!/bin/bash
+#SBATCH --time=168:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --job-name=raxml_g95_3root
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g95/raxml_3root.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g95/raxml_3root.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=15
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate raxml_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g95
+
+raxmlHPC-PTHREADS-AVX2 \
+-f a \
+-s ../concat_sco_g95.fasta \
+-n tubme_scog95_100bs_3root \
+-m PROTGAMMAAUTO \
+-x 8212 \
+-N 100 \
+-p 1176 \
+-T 30 \
+-o rh1988,ag342,rh721
+```
+
+
+### 13.3 - SCO g90
+
+```{bash running g90 root 3 root}
+#!/bin/bash
+#SBATCH --time=168:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --job-name=raxml_g90_3root
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g90/raxml_3root.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g90/raxml_3root.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=15
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate raxml_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g90
+
+raxmlHPC-PTHREADS-AVX2 \
+-f a \
+-s ../concat_sco_g90.fasta \
+-n tubme_scog90_100bs_3root \
+-m PROTGAMMAAUTO \
+-x 8212 \
+-N 100 \
+-p 1176 \
+-T 30 \
+-o rh1988,ag342,rh721
+```
+
+
+### 13.4 - SCO g85
+
+```{bash running g85 with three root}
+#!/bin/bash
+#SBATCH --time=168:00:00
+#SBATCH --qos=blanca-qsmicrobes
+#SBATCH --partition=blanca-qsmicrobes
+#SBATCH --account=blanca-qsmicrobes
+#SBATCH --nodes=1
+#SBATCH --mem=40G
+#SBATCH --job-name=raxml_g85_3root
+#SBATCH --error=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g85/raxml_3root.err
+#SBATCH --output=/scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g85/raxml_3root.out
+#SBATCH --mail-type=ALL
+#SBATCH --mail-user=beyo2625@colorado.edu
+#SBATCH --ntasks=15
+#SBATCH --cpus-per-task=2
+
+module purge 
+eval "$(conda shell.bash hook)"
+conda activate raxml_env
+
+cd /scratch/alpine/beyo2625/arthur_truffles/predict_trees/raxml_g85
+
+raxmlHPC-PTHREADS-AVX2 \
+-f a \
+-s ../concat_sco_g85.fasta \
+-n tubme_scog85_100bs_3root \
+-m PROTGAMMAAUTO \
+-x 8212 \
+-N 100 \
+-p 1176 \
+-T 30 \
+-o rh1988,ag342,rh721
+```
